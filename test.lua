@@ -101,7 +101,8 @@ function CreateESP(player)
     ESPObjects[player] = {
         Drawings = drawings,
         Model = nil,
-        LastUpdate = 0
+        LastUpdate = 0,
+        IsOnScreen = false -- Флаг для отслеживания видимости
     }
     
     -- Поиск модели игрока в папке Players
@@ -113,8 +114,6 @@ function FindPlayerModel(player)
     local model = PlayerModelsFolder:FindFirstChild(player.Name)
     if model and model:IsA("Model") then
         ESPObjects[player].Model = model
-        
-        -- Создание линий скелетона при найденной модели
         CreateSkeletonLines(player, model)
     end
 end
@@ -220,29 +219,29 @@ function DrawBox(drawings, corners, color, isVisible)
     drawings.BoxTop.From = corners[1]
     drawings.BoxTop.To = corners[2]
     drawings.BoxTop.Color = boxColor
-    drawings.BoxTop.Visible = true
+    drawings.BoxTop.Visible = ESP_CONFIG.Box
     
     drawings.BoxBottom.From = corners[3]
     drawings.BoxBottom.To = corners[4]
     drawings.BoxBottom.Color = boxColor
-    drawings.BoxBottom.Visible = true
+    drawings.BoxBottom.Visible = ESP_CONFIG.Box
     
     -- Боковые грани
     drawings.BoxLeft.From = corners[1]
     drawings.BoxLeft.To = corners[4]
     drawings.BoxLeft.Color = boxColor
-    drawings.BoxLeft.Visible = true
+    drawings.BoxLeft.Visible = ESP_CONFIG.Box
     
     drawings.BoxRight.From = corners[2]
     drawings.BoxRight.To = corners[3]
     drawings.BoxRight.Color = boxColor
-    drawings.BoxRight.Visible = true
+    drawings.BoxRight.Visible = ESP_CONFIG.Box
     
     return true
 end
 
 -- Рисование скелетона
-function DrawSkeleton(player, model)
+function DrawSkeleton(player, model, isOnScreen)
     local skeletonLines = ESPObjects[player].SkeletonLines
     if not skeletonLines then return end
     
@@ -250,13 +249,14 @@ function DrawSkeleton(player, model)
         local part1 = model:FindFirstChild(boneData.Part1Name)
         local part2 = model:FindFirstChild(boneData.Part2Name)
         
-        if part1 and part2 then
+        if part1 and part2 and isOnScreen then
             local screenPos1, onScreen1 = Camera:WorldToViewportPoint(part1.Position)
             local screenPos2, onScreen2 = Camera:WorldToViewportPoint(part2.Position)
             
             if onScreen1 and onScreen2 then
                 boneData.Line.From = Vector2.new(screenPos1.X, screenPos1.Y)
                 boneData.Line.To = Vector2.new(screenPos2.X, screenPos2.Y)
+                boneData.Line.Color = ESP_CONFIG.SkeletonColor
                 boneData.Line.Visible = ESP_CONFIG.Skeleton
             else
                 boneData.Line.Visible = false
@@ -264,6 +264,62 @@ function DrawSkeleton(player, model)
         else
             boneData.Line.Visible = false
         end
+    end
+end
+
+-- Функция скрытия всех элементов игрока
+function HidePlayerESP(player)
+    local espData = ESPObjects[player]
+    if not espData then return end
+    
+    local drawings = espData.Drawings
+    
+    -- Скрываем основные элементы
+    for _, drawing in pairs(drawings) do
+        if typeof(drawing) == "table" then
+            for _, d in pairs(drawing) do
+                if d.Visible then d.Visible = false end
+            end
+        else
+            if drawing.Visible then drawing.Visible = false end
+        end
+    end
+    
+    -- Скрываем скелетон
+    if espData.SkeletonLines then
+        for _, boneData in ipairs(espData.SkeletonLines) do
+            boneData.Line.Visible = false
+        end
+    end
+    
+    espData.IsOnScreen = false
+end
+
+-- Функция обновления цветов и настроек
+function UpdateESPColors()
+    for player, espData in pairs(ESPObjects) do
+        local drawings = espData.Drawings
+        
+        -- Обновляем цвета бокса
+        for _, line in pairs({drawings.BoxTop, drawings.BoxBottom, drawings.BoxLeft, drawings.BoxRight}) do
+            line.Color = ESP_CONFIG.BoxColor
+        end
+        
+        -- Обновляем цвета текста
+        for _, text in pairs({drawings.Name, drawings.Health, drawings.Distance}) do
+            text.Color = ESP_CONFIG.TextColor
+            text.Visible = false -- Сбрасываем видимость
+        end
+        
+        -- Обновляем цвета скелетона
+        if espData.SkeletonLines then
+            for _, boneData in ipairs(espData.SkeletonLines) do
+                boneData.Line.Color = ESP_CONFIG.SkeletonColor
+            end
+        end
+        
+        -- Обновляем трейсер
+        drawings.Tracer.Color = ESP_CONFIG.SkeletonColor
     end
 end
 
@@ -276,15 +332,7 @@ function UpdateESP()
         if not espData.Model or not espData.Model.Parent then
             FindPlayerModel(player)
             if not espData.Model then
-                for _, drawing in pairs(drawings) do
-                    if typeof(drawing) == "table" then
-                        for _, d in pairs(drawing) do
-                            if d.Visible then d.Visible = false end
-                        end
-                    else
-                        if drawing.Visible then drawing.Visible = false end
-                    end
-                end
+                HidePlayerESP(player)
                 continue
             end
         end
@@ -293,36 +341,23 @@ function UpdateESP()
         local primaryPart = model.PrimaryPart or model:FindFirstChild("HumanoidRootPart") or model:FindFirstChild("Head")
         
         if not primaryPart then
-            for _, drawing in pairs(drawings) do
-                if typeof(drawing) == "table" then
-                    for _, d in pairs(drawing) do
-                        if d.Visible then d.Visible = false end
-                    end
-                else
-                    if drawing.Visible then drawing.Visible = false end
-                end
-            end
+            HidePlayerESP(player)
             continue
         end
 
         -- Дистанция
         local distance = (primaryPart.Position - Camera.CFrame.Position).Magnitude
         if distance > ESP_CONFIG.MaxDistance then
-            for _, drawing in pairs(drawings) do
-                if typeof(drawing) == "table" then
-                    for _, d in pairs(drawing) do
-                        if d.Visible then d.Visible = false end
-                    end
-                else
-                    if drawing.Visible then drawing.Visible = false end
-                end
-            end
+            HidePlayerESP(player)
             continue
         end
 
         -- Получаем bounding box
         local bbox = GetModelBoundingBox(model)
-        if not bbox then continue end
+        if not bbox then 
+            HidePlayerESP(player)
+            continue
+        end
 
         -- Конвертируем точки в 2D
         local corners = {}
@@ -335,16 +370,13 @@ function UpdateESP()
         end
 
         if not allOnScreen then
-            for _, drawing in pairs(drawings) do
-                if typeof(drawing) == "table" then
-                    for _, d in pairs(drawing) do
-                        if d.Visible then d.Visible = false end
-                    end
-                else
-                    if drawing.Visible then drawing.Visible = false end
-                end
-            end
+            HidePlayerESP(player)
             continue
+        end
+
+        -- Если игрок только что появился на экране
+        if not espData.IsOnScreen then
+            espData.IsOnScreen = true
         end
 
         -- Проверяем видимость
@@ -446,15 +478,7 @@ function UpdateESP()
         end
 
         -- СКЕЛЕТОН
-        if ESP_CONFIG.Skeleton then
-            DrawSkeleton(player, model)
-        else
-            if espData.SkeletonLines then
-                for _, boneData in ipairs(espData.SkeletonLines) do
-                    boneData.Line.Visible = false
-                end
-            end
-        end
+        DrawSkeleton(player, model, true)
     end
 end
 
@@ -495,6 +519,7 @@ Players.PlayerRemoving:Connect(function(player)
         end
         
         ESPObjects[player] = nil
+        print("ESP удален для игрока: " .. player.Name)
     end
 end)
 
@@ -502,9 +527,13 @@ end)
 PlayerModelsFolder.ChildAdded:Connect(function(child)
     if child:IsA("Model") then
         local player = Players:FindFirstChild(child.Name)
-        if player and player ~= LocalPlayer and ESPObjects[player] then
-            ESPObjects[player].Model = child
-            CreateSkeletonLines(player, child)
+        if player and player ~= LocalPlayer then
+            if ESPObjects[player] then
+                ESPObjects[player].Model = child
+                CreateSkeletonLines(player, child)
+            else
+                CreateESP(player)
+            end
         end
     end
 end)
@@ -514,6 +543,7 @@ PlayerModelsFolder.ChildRemoved:Connect(function(child)
         local player = Players:FindFirstChild(child.Name)
         if player and ESPObjects[player] then
             ESPObjects[player].Model = nil
+            HidePlayerESP(player)
         end
     end
 end)
@@ -528,17 +558,31 @@ RunService.Heartbeat:Connect(function(delta)
     end
 end)
 
--- Управление
+-- 🎛️ УЛУЧШЕННАЯ СИСТЕМА УПРАВЛЕНИЯ
 local ESP = {}
 
 function ESP:Toggle(type, state)
     if ESP_CONFIG[type] ~= nil then
         ESP_CONFIG[type] = state
+        print(type .. " " .. (state and "включен" or "выключен"))
+        
+        -- Применяем изменения немедленно
+        UpdateESPColors()
+        
+        -- Принудительно обновляем видимость
+        for player, espData in pairs(ESPObjects) do
+            if not espData.IsOnScreen then
+                HidePlayerESP(player)
+            end
+        end
+    else
+        warn("Элемент " .. type .. " не найден!")
     end
 end
 
 function ESP:SetMaxDistance(distance)
     ESP_CONFIG.MaxDistance = distance
+    print("Макс. дистанция установлена: " .. distance)
 end
 
 function ESP:SetColors(boxVisible, boxHidden, text, skeleton)
@@ -546,10 +590,31 @@ function ESP:SetColors(boxVisible, boxHidden, text, skeleton)
     ESP_CONFIG.BoxColorHidden = boxHidden or ESP_CONFIG.BoxColorHidden
     ESP_CONFIG.TextColor = text or ESP_CONFIG.TextColor
     ESP_CONFIG.SkeletonColor = skeleton or ESP_CONFIG.SkeletonColor
+    
+    print("Цвета обновлены!")
+    
+    -- Немедленно применяем новые цвета
+    UpdateESPColors()
+end
+
+function ESP:RefreshAll()
+    print("Обновление всех ESP...")
+    UpdateESPColors()
+    
+    -- Принудительное скрытие всех элементов
+    for player, espData in pairs(ESPObjects) do
+        HidePlayerESP(player)
+        espData.IsOnScreen = false
+    end
+end
+
+function ESP:GetConfig()
+    return ESP_CONFIG
 end
 
 print("✅ ESP для кастомных моделей загружен!")
 print("📁 Папка Players: " .. tostring(PlayerModelsFolder))
 print("🎯 Игроков: " .. #Players:GetPlayers())
+print("⚙️ Используй ESP:Toggle('Box', true/false) для управления")
 
 return ESP
