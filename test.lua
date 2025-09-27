@@ -5,12 +5,12 @@ local Camera = workspace.CurrentCamera
 
 -- Конфиг
 local ESP_CONFIG = {
-    Box = true,
-    Name = true,
-    HealthBar = true,
-    HealthText = true,
-    Distance = true,
-    Skeleton = true,
+    Box = false,
+    Name = false,
+    HealthBar = false,
+    HealthText = false,
+    Distance = false,
+    Skeleton = false,
     Tracer = false,
     
     MaxDistance = 2000,
